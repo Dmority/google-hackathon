@@ -49,13 +49,21 @@ export async function updateRoomMembers(roomId: string, members: User[]) {
 // Message関連の操作
 export async function saveMessage(message: Message) {
   await connect();
-  await client.rPush(`messages:${message.roomId}`, JSON.stringify(message));
+  const messageKey = `message:${message.roomId}:${message.id}`;
+  await client.set(messageKey, JSON.stringify(message));
+  await client.rPush(`messages:${message.roomId}`, messageKey);
 }
 
 export async function getMessages(roomId: string): Promise<Message[]> {
   await connect();
-  const messages = await client.lRange(`messages:${roomId}`, 0, -1);
-  return messages.map((msg) => JSON.parse(msg));
+  const messageKeys = await client.lRange(`messages:${roomId}`, 0, -1);
+  const messages = await Promise.all(
+    messageKeys.map(async (key) => {
+      const message = await client.get(key);
+      return message ? JSON.parse(message) : null;
+    })
+  );
+  return messages.filter((msg): msg is Message => msg !== null);
 }
 
 export async function updateMessageReadStatus(
@@ -64,21 +72,15 @@ export async function updateMessageReadStatus(
   userId: string
 ) {
   await connect();
-  const messages = await getMessages(roomId);
-  const updatedMessages = messages.map((msg) => {
-    if (msg.id === messageId && !msg.readBy.includes(userId)) {
-      return {
-        ...msg,
-        readBy: [...msg.readBy, userId],
-      };
-    }
-    return msg;
-  });
+  const messageKey = `message:${roomId}:${messageId}`;
+  const message = await client.get(messageKey);
 
-  // メッセージリストを更新
-  await client.del(`messages:${roomId}`);
-  for (const msg of updatedMessages) {
-    await client.rPush(`messages:${roomId}`, JSON.stringify(msg));
+  if (message) {
+    const parsedMessage = JSON.parse(message);
+    if (!parsedMessage.readBy.includes(userId)) {
+      parsedMessage.readBy.push(userId);
+      await client.set(messageKey, JSON.stringify(parsedMessage));
+    }
   }
 }
 

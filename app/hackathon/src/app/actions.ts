@@ -34,7 +34,7 @@ export interface Room {
 
 import {
   saveRoom,
-  getRoom,
+  getRoom as getRoomFromRedis,
   getRoomByInviteCode,
   updateRoomMembers,
   saveMessage,
@@ -156,9 +156,25 @@ export async function createAgent(agent: Agent): Promise<void> {
     };
     room.members = [...room.members, agentUser];
     await saveRoom(room);
+
+    // エージェント追加のシステムメッセージを送信
+    const systemMessage: Message = {
+      id: Date.now(),
+      text: `新しいエージェント「${agent.name}」が追加されました。@${agentUser.name} でメンションできます。`,
+      sender: "System",
+      timestamp: new Date().toISOString(),
+      roomId: agent.roomId,
+      readBy: [],
+      mentions: [],
+    };
+    await saveMessage(systemMessage);
   }
 }
 
 export async function getAgentsByRoom(roomId: string): Promise<Agent[]> {
   return getAgents(roomId);
+}
+
+export async function getRoom(roomId: string): Promise<Room | null> {
+  return await getRoomFromRedis(roomId);
 }

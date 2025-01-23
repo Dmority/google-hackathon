@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useCallback, useMemo } from "react";
+import { useSocket } from "../../../hooks/useSocket";
 import {
   Message,
   Room,
@@ -13,7 +14,15 @@ import {
   updateMessageReadStatus,
   getUserSession,
   createAgent,
+  getRoom,
 } from "../../actions";
+
+// ReadStatusUpdateの型定義をuseSocket.tsから再利用
+interface ReadStatusUpdate {
+  messageId: number;
+  roomId: string;
+  userId: string;
+}
 
 export default function ChatRoom() {
   const [messages, setMessages] = useState<Message[]>([]);
@@ -36,14 +45,31 @@ export default function ChatRoom() {
   const [mentionFilter, setMentionFilter] = useState("");
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const mentionStartIndex = useRef<number>(-1);
+  const [socketSendMessage, setSocketSendMessage] = useState<
+    ((message: Message) => void) | null
+  >(null);
+  const [socketUpdateReadStatus, setSocketUpdateReadStatus] = useState<
+    ((messageIds: number[], userId: string) => void) | null
+  >(null);
 
-  const scrollToBottom = () => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  };
+  const scrollToBottom = useCallback((smooth = true) => {
+    messagesEndRef.current?.scrollIntoView({
+      behavior: smooth ? "smooth" : "auto",
+      block: "end",
+    });
+  }, []);
 
   useEffect(() => {
-    scrollToBottom();
-  }, [messages]);
+    if (messages.length > 0) {
+      const lastMessage = messages[messages.length - 1];
+      const isOwnMessage = lastMessage.sender === currentUser?.name;
+      scrollToBottom(!isOwnMessage);
+    }
+  }, [messages, currentUser?.name, scrollToBottom]);
+
+  useEffect(() => {
+    scrollToBottom(false);
+  }, [scrollToBottom]);
 
   useEffect(() => {
     const checkSession = async () => {
@@ -54,7 +80,6 @@ export default function ChatRoom() {
         return;
       }
 
-      // セッションの確認
       const sessionId = localStorage.getItem(`session:${room.id}`);
       if (sessionId) {
         const user = await getUserSession(sessionId);
@@ -71,54 +96,180 @@ export default function ChatRoom() {
     checkSession();
   }, []);
 
+  // ルーム情報を定期的に更新
   useEffect(() => {
-    if (currentRoom) {
-      const loadMessages = async () => {
-        try {
-          const fetchedMessages = await fetchMessages(currentRoom.id);
-          // 既読情報を更新
-          const updatedMessages = fetchedMessages.map((message) => ({
+    const roomId = currentRoom?.id;
+    if (!roomId) return;
+
+    const updateRoomInfo = async () => {
+      try {
+        const updatedRoom = await getRoom(roomId);
+        if (updatedRoom) {
+          setCurrentRoom(updatedRoom);
+        }
+      } catch (error) {
+        console.error("ルーム情報の更新中にエラーが発生しました:", error);
+      }
+    };
+
+    // 初回更新
+    updateRoomInfo();
+
+    // 3秒ごとに更新
+    const intervalId = setInterval(updateRoomInfo, 3000);
+    return () => clearInterval(intervalId);
+  }, [currentRoom?.id]);
+
+  const handleReadStatusUpdate = useCallback((updates: ReadStatusUpdate[]) => {
+    setMessages((prevMessages) =>
+      prevMessages.map((msg) => {
+        const update = updates.find((u) => u.messageId === msg.id);
+        if (update && !msg.readBy.includes(update.userId)) {
+          return { ...msg, readBy: [...msg.readBy, update.userId] };
+        }
+        return msg;
+      })
+    );
+  }, []);
+
+  const handleNewMessage = useCallback(
+    (message: Message) => {
+      setMessages((prevMessages) => {
+        const isDuplicate = prevMessages.some((msg) => msg.id === message.id);
+        if (isDuplicate) {
+          return prevMessages;
+        }
+        return [...prevMessages, message];
+      });
+
+      if (
+        currentUser &&
+        message.sender !== currentUser.name &&
+        socketUpdateReadStatus
+      ) {
+        socketUpdateReadStatus([message.id], currentUser.id);
+      }
+    },
+    [currentUser, socketUpdateReadStatus]
+  );
+
+  const handleReadStatusUpdateCallback = useCallback(
+    (data: ReadStatusUpdate | ReadStatusUpdate[]) => {
+      if (Array.isArray(data)) {
+        handleReadStatusUpdate(data);
+      } else {
+        handleReadStatusUpdate([data]);
+      }
+    },
+    [handleReadStatusUpdate]
+  );
+
+  const {
+    sendMessage: wsSocketSendMessage,
+    updateReadStatus: wsSocketUpdateReadStatus,
+  } = useSocket({
+    roomId: currentRoom?.id || "",
+    onNewMessage: handleNewMessage,
+    onReadStatusUpdate: handleReadStatusUpdateCallback,
+  });
+
+  useEffect(() => {
+    setSocketSendMessage(() => wsSocketSendMessage);
+    setSocketUpdateReadStatus(() => wsSocketUpdateReadStatus);
+  }, [wsSocketSendMessage, wsSocketUpdateReadStatus]);
+
+  useEffect(() => {
+    const roomId = currentRoom?.id;
+    if (!roomId) return;
+
+    const updateMessages = async () => {
+      try {
+        const fetchedMessages = await fetchMessages(roomId);
+        setMessages((prevMessages) => {
+          const newMessages = fetchedMessages.filter(
+            (newMsg) =>
+              !prevMessages.some((prevMsg) => prevMsg.id === newMsg.id)
+          );
+          if (newMessages.length === 0) {
+            return prevMessages;
+          }
+          return [
+            ...prevMessages,
+            ...newMessages.map((message) => ({
+              ...message,
+              readBy: message.readBy || [],
+              mentions: message.mentions || [],
+            })),
+          ];
+        });
+      } catch (error) {
+        console.error("メッセージの更新中にエラーが発生しました:", error);
+      }
+    };
+
+    const intervalId = setInterval(updateMessages, 3000);
+    return () => clearInterval(intervalId);
+  }, [currentRoom?.id]);
+
+  useEffect(() => {
+    const roomId = currentRoom?.id;
+    if (!roomId) return;
+
+    const loadInitialMessages = async () => {
+      try {
+        const fetchedMessages = await fetchMessages(roomId);
+        setMessages(
+          fetchedMessages.map((message) => ({
             ...message,
             readBy: message.readBy || [],
             mentions: message.mentions || [],
-          }));
-          if (currentUser) {
-            const unreadMessages = updatedMessages.filter(
-              (msg) => !msg.readBy.includes(currentUser.id)
-            );
-            if (unreadMessages.length > 0) {
-              const newMessages = updatedMessages.map((msg) =>
-                unreadMessages.find((u) => u.id === msg.id) &&
-                !msg.readBy.includes(currentUser.id)
-                  ? { ...msg, readBy: [...msg.readBy, currentUser.id] }
-                  : msg
-              );
-              setMessages(newMessages);
-              // 既読情報をサーバーに送信
-              unreadMessages.forEach(async (message) => {
-                await updateMessageReadStatus(
-                  message.id,
-                  currentRoom.id,
-                  currentUser.id
-                );
-              });
-            } else {
-              setMessages(updatedMessages);
-            }
-          }
-          setError(null);
-        } catch (error) {
-          console.error("メッセージの読み込み中にエラーが発生しました:", error);
-          setError("メッセージの読み込みに失敗しました");
-        }
-      };
-      loadMessages();
+          }))
+        );
+      } catch (error) {
+        console.error("メッセージの読み込み中にエラーが発生しました:", error);
+        setError("メッセージの読み込みに失敗しました");
+      }
+    };
 
-      // 3秒ごとにメッセージを更新
-      const interval = setInterval(loadMessages, 3000);
-      return () => clearInterval(interval);
-    }
-  }, [currentRoom, currentUser]);
+    loadInitialMessages();
+  }, [currentRoom?.id]);
+
+  const sortedMessages = useMemo(() => {
+    const uniqueMessages = messages.reduce((acc: Message[], current) => {
+      const exists = acc.find((msg) => msg.id === current.id);
+      if (!exists) {
+        acc.push(current);
+      }
+      return acc;
+    }, []);
+
+    return uniqueMessages.sort((a, b) => {
+      return new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime();
+    });
+  }, [messages]);
+
+  useEffect(() => {
+    if (
+      !currentUser ||
+      !currentRoom ||
+      messages.length === 0 ||
+      !socketUpdateReadStatus
+    )
+      return;
+
+    const unreadMessages = messages.filter(
+      (msg) => !msg.readBy.includes(currentUser.id)
+    );
+
+    if (unreadMessages.length === 0) return;
+
+    const timeoutId = setTimeout(() => {
+      const messageIds = unreadMessages.map((msg) => msg.id);
+      socketUpdateReadStatus(messageIds, currentUser.id);
+    }, 1000);
+
+    return () => clearTimeout(timeoutId);
+  }, [currentUser, currentRoom, messages, socketUpdateReadStatus]);
 
   const handleJoinRoom = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -144,12 +295,18 @@ export default function ChatRoom() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newMessage.trim() || !currentUser || !currentRoom || isSending) return;
+    if (
+      !newMessage.trim() ||
+      !currentUser ||
+      !currentRoom ||
+      isSending ||
+      !socketSendMessage
+    )
+      return;
 
     setIsSending(true);
 
     try {
-      // メンションを抽出
       const mentions =
         newMessage.match(/@(\S+)/g)?.map((m) => m.slice(1)) || [];
       const mentionedUsers = currentRoom.members
@@ -165,9 +322,9 @@ export default function ChatRoom() {
         readBy: [currentUser.id],
         mentions: mentionedUsers,
       };
+
       await sendMessage(message);
-      const updatedMessages = await fetchMessages(currentRoom.id);
-      setMessages(updatedMessages);
+      socketSendMessage(message);
       setNewMessage("");
       setError(null);
     } catch (error) {
@@ -240,7 +397,6 @@ export default function ChatRoom() {
     const value = e.target.value;
     setNewMessage(value);
 
-    // メンション候補の表示制御
     const lastAtIndex = value.lastIndexOf("@");
     if (lastAtIndex !== -1 && lastAtIndex === mentionStartIndex.current) {
       const filterText = value.slice(lastAtIndex + 1);
@@ -327,9 +483,9 @@ export default function ChatRoom() {
 
   return (
     <main className="flex min-h-screen bg-gray-100">
-      <div className="flex-1 flex flex-col">
+      <div className="flex-1 flex flex-col h-screen">
         {/* Room Header */}
-        <div className="bg-white border-b border-gray-200 p-4">
+        <div className="bg-white border-b border-gray-200 p-4 sticky top-0 z-50">
           <div className="flex justify-between items-center">
             <div>
               <h2 className="text-lg font-semibold">{currentRoom?.name}</h2>
@@ -403,21 +559,24 @@ export default function ChatRoom() {
         </div>
 
         {/* Messages */}
-        <div className="flex-1 overflow-y-auto p-4 space-y-4">
+        <div
+          className="flex-1 overflow-y-auto p-4 space-y-4"
+          style={{ height: "calc(100vh - 140px)" }}
+        >
           {error && (
             <div className="p-3 bg-red-100 text-red-700 rounded-lg text-center">
               {error}
             </div>
           )}
-          {messages.length > 0 ? (
-            messages.map((message) => (
+          {sortedMessages.length > 0 ? (
+            sortedMessages.map((message) => (
               <div
                 key={message.id}
                 className={`flex ${
                   message.sender === currentUser?.name
                     ? "justify-end"
                     : "justify-start"
-                }`}
+                } animate-fadeIn`}
               >
                 <div
                   className={`max-w-[70%] rounded-lg p-3 ${
@@ -490,21 +649,20 @@ export default function ChatRoom() {
         </div>
 
         {/* Message Input */}
-        <div className="relative">
-          <form onSubmit={handleSubmit} className="bg-white border-t p-4">
+        <div className="relative bg-white border-t">
+          <form onSubmit={handleSubmit} className="p-4">
             <div className="flex space-x-2">
               <textarea
                 value={newMessage}
                 onChange={handleMessageChange}
                 autoFocus
+                style={{ minHeight: "44px", maxHeight: "120px" }}
                 onKeyDown={(e) => {
                   if (e.key === "Enter") {
                     if (e.shiftKey) {
-                      // Shift+Enterの場合は改行を挿入
                       e.preventDefault();
                       setNewMessage((prev) => prev + "\n");
                     } else {
-                      // 通常のEnterの場合は送信
                       e.preventDefault();
                       handleSubmit(e);
                     }
