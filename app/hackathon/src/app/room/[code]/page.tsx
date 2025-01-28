@@ -174,8 +174,10 @@ export default function ChatRoom() {
   });
 
   useEffect(() => {
-    setSocketSendMessage(() => wsSocketSendMessage);
-    setSocketUpdateReadStatus(() => wsSocketUpdateReadStatus);
+    if (wsSocketSendMessage && wsSocketUpdateReadStatus) {
+      setSocketSendMessage(() => wsSocketSendMessage);
+      setSocketUpdateReadStatus(() => wsSocketUpdateReadStatus);
+    }
   }, [wsSocketSendMessage, wsSocketUpdateReadStatus]);
 
   useEffect(() => {

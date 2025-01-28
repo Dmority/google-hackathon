@@ -54,23 +54,19 @@ export function useSocket({
         isInitializing = true;
         try {
           // 現在のホストとポートを取得
-          const protocol = window.location.protocol;
-          const host = window.location.hostname;
-          const port = window.location.port;
-          const baseURL = `${protocol}//${host}${port ? `:${port}` : ""}`;
+          // Socket.IOの初期化前にAPIエンドポイントを呼び出し
+          await fetch("/api/socket");
 
-          globalSocket = io(baseURL, {
-            path: "/api/ws",
-            addTrailingSlash: false,
+          globalSocket = io(window.location.origin, {
+            path: "/api/socket",
             transports: ["websocket"],
-            reconnectionDelay: 100,
-            reconnectionDelayMax: 1000,
-            timeout: 5000,
+            reconnectionDelay: 1000,
+            reconnectionDelayMax: 5000,
+            timeout: 30000,
             reconnection: true,
-            reconnectionAttempts: Infinity,
-            forceNew: false,
+            reconnectionAttempts: 10,
+            forceNew: true,
             withCredentials: true,
-            autoConnect: true,
           });
 
           // エラーハンドリングの強化

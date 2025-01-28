@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { createRoom } from "./actions";
+import { seedData } from "./seed";
 import { useRouter } from "next/navigation";
 
 export default function Home() {
@@ -10,6 +11,7 @@ export default function Home() {
   const [isCreating, setIsCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const router = useRouter();
+  const isDevelopment = process.env.NODE_ENV === "development";
 
   const generateInviteCode = () => {
     return Math.random().toString(36).substring(2, 8).toUpperCase();
@@ -21,17 +23,8 @@ export default function Home() {
 
     try {
       setIsCreating(true);
-      const inviteCode = generateInviteCode();
-      const newRoom = {
-        id: Date.now().toString(),
-        name: newRoomName,
-        description: newRoomDescription,
-        inviteCode: inviteCode,
-        members: [],
-        agents: [],
-      };
-      await createRoom(newRoom);
-      router.push(`/room/${inviteCode}`);
+      const newRoom = await createRoom(newRoomName, newRoomDescription);
+      router.push(`/room/${newRoom.inviteCode}`);
     } catch (error) {
       console.error("ルーム作成中にエラーが発生しました:", error);
       setError("ルームの作成に失敗しました");
@@ -88,6 +81,27 @@ export default function Home() {
               {isCreating ? "作成中..." : "作成"}
             </button>
           </form>
+          {isDevelopment && (
+            <div className="mt-4 pt-4 border-t">
+              <button
+                onClick={async () => {
+                  try {
+                    await seedData();
+                    setError(null);
+                  } catch (error) {
+                    console.error(
+                      "サンプルデータの作成中にエラーが発生しました:",
+                      error
+                    );
+                    setError("サンプルデータの作成に失敗しました");
+                  }
+                }}
+                className="w-full py-2 bg-gray-500 text-white rounded-lg hover:bg-gray-600 transition-colors"
+              >
+                サンプルデータを作成
+              </button>
+            </div>
+          )}
         </div>
       </div>
     </main>

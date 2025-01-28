@@ -13,6 +13,15 @@ export interface User {
   name: string;
 }
 
+export interface Room {
+  id: string;
+  name: string;
+  description?: string;
+  inviteCode: string;
+  members: User[];
+  agents: Agent[];
+}
+
 export interface Agent {
   id: string;
   name: string;
@@ -23,158 +32,199 @@ export interface Agent {
   createdAt: string;
 }
 
-export interface Room {
-  id: string;
-  name: string;
-  description: string;
-  inviteCode: string;
-  members: User[];
-  agents: Agent[];
-}
-
-import {
-  saveRoom,
-  getRoom as getRoomFromRedis,
-  getRoomByInviteCode,
-  updateRoomMembers,
-  saveMessage,
-  getMessages,
-  updateMessageReadStatus as updateRedisMessageReadStatus,
-  saveSession,
-  getSession,
-  deleteSession,
-  saveAgent,
-  getAgents,
-} from "../lib/redis";
-
-export async function createRoom(room: Room): Promise<void> {
-  await saveRoom(room);
-}
-
-export async function joinRoom(roomId: string, user: User): Promise<string> {
-  const room = await getRoom(roomId);
-  if (room) {
-    if (!room.members.some((member) => member.id === user.id)) {
-      room.members.push(user);
-      await updateRoomMembers(roomId, room.members);
-    }
-    // セッションを作成して返す
-    return await saveSession(roomId, user);
-  }
-  throw new Error("Room not found");
-}
-
-export async function sendMessage(message: Message): Promise<void> {
-  await saveMessage(message);
-
-  // メンションされたエージェントの応答を処理
-  const room = await getRoom(message.roomId);
-  if (room && message.mentions.length > 0) {
-    const mentionedAgents = room.agents.filter((agent) =>
-      message.mentions.includes(agent.id)
-    );
-
-    for (const agent of mentionedAgents) {
-      const response: Message = {
-        id: Date.now() + Math.random(), // ユニークなIDを生成
-        text: "了解しました",
-        sender: `Agent:${agent.name}`,
-        timestamp: new Date().toISOString(),
-        roomId: message.roomId,
-        readBy: [agent.id],
-        mentions: [],
-      };
-      await saveMessage(response);
-    }
-  }
-}
-
-export async function fetchMessages(roomId: string): Promise<Message[]> {
-  return getMessages(roomId);
-}
+// Redis client is used to store and retrieve data
+let messages: Message[] = [];
+let rooms: Room[] = [
+  {
+    id: "default",
+    name: "テストルーム",
+    description: "Geminiエージェントのテストルーム",
+    inviteCode: "test123",
+    members: [],
+    agents: [],
+  },
+];
+let agents: Agent[] = [];
 
 export async function findRoomByInviteCode(
   inviteCode: string
 ): Promise<Room | null> {
-  return getRoomByInviteCode(inviteCode);
+  return rooms.find((room) => room.inviteCode === inviteCode) || null;
 }
 
-export async function updateRoom(room: Room): Promise<void> {
-  await saveRoom(room);
+export async function getRoom(roomId: string): Promise<Room | null> {
+  return rooms.find((room) => room.id === roomId) || null;
 }
 
-export async function deleteRoom(roomId: string): Promise<void> {
-  // TODO: Redisからルームを削除する機能を実装
+export async function joinRoom(roomId: string, user: User): Promise<string> {
+  const room = rooms.find((r) => r.id === roomId);
+  if (!room) throw new Error("Room not found");
+
+  if (!room.members.find((m) => m.id === user.id)) {
+    room.members.push(user);
+  }
+
+  return `session_${user.id}`;
+}
+
+export async function getUserSession(sessionId: string): Promise<User | null> {
+  const userId = sessionId.replace("session_", "");
+  for (const room of rooms) {
+    const user = room.members.find((m) => m.id === userId);
+    if (user) return user;
+  }
+  return null;
+}
+
+export async function fetchMessages(roomId: string): Promise<Message[]> {
+  return messages.filter((m) => m.roomId === roomId);
+}
+
+export async function sendMessage(message: Message): Promise<void> {
+  messages.push(message);
+
+  // エージェントへのメンションがある場合、エージェントからの応答を生成
+  const room = rooms.find((r) => r.id === message.roomId);
+  if (room) {
+    // メンションされたエージェントを抽出
+    const mentionPattern = /@(Agent:[^\s]+)/g;
+    const mentions = [...message.text.matchAll(mentionPattern)].map(
+      (match) => match[1]
+    );
+
+    // メンションの順序を保持しながら、同じエージェントへの連続したメンションをグループ化
+    const mentionGroups: { agent: Agent; nextAgent: Agent | null }[] = [];
+    for (let i = 0; i < mentions.length; i++) {
+      const currentAgentName = mentions[i];
+      const currentAgent = room.agents.find(
+        (agent) => agent.name === currentAgentName
+      );
+      if (!currentAgent) continue;
+
+      const nextMention = mentions[i + 1];
+      const nextAgent = nextMention
+        ? room.agents.find((agent) => agent.name === nextMention) || null
+        : null;
+
+      // 同じエージェントが連続する場合はスキップ
+      if (
+        mentionGroups.length > 0 &&
+        mentionGroups[mentionGroups.length - 1].agent.name === currentAgent.name
+      ) {
+        continue;
+      }
+
+      mentionGroups.push({
+        agent: currentAgent,
+        nextAgent: nextAgent,
+      });
+    }
+
+    // グループ化されたメンションに基づいて応答を生成
+    for (let i = 0; i < mentionGroups.length; i++) {
+      const { agent, nextAgent } = mentionGroups[i];
+      try {
+        // 会話の履歴を構築
+        const conversationHistory = messages
+          .filter((m) => m.roomId === message.roomId)
+          .slice(-5)
+          .map((m) => `${m.sender}: ${m.text}`)
+          .join("\n");
+
+        const response = await fetch("/api/chat", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            prompt: `
+Context: ${agent.context}
+Instructions: ${agent.instructions}
+Recent Conversation:
+${conversationHistory}
+User Message: ${message.text}
+${
+  i > 0
+    ? `Previous Agent Responses:
+${mentionGroups
+  .slice(0, i)
+  .map((group) => {
+    const prevResponse = messages[messages.length - (mentionGroups.length - i)];
+    return `${group.agent.name}: ${prevResponse.text}`;
+  })
+  .join("\n")}`
+    : ""
+}
+${nextAgent ? `\nPlease address your response to @${nextAgent.name}` : ""}
+`,
+          }),
+        });
+
+        if (!response.ok) {
+          throw new Error("Failed to get response from agent");
+        }
+
+        const data = await response.json();
+        const agentMessage: Message = {
+          id: Date.now() + Math.random(),
+          text: data.text,
+          sender: agent.name,
+          timestamp: new Date().toISOString(),
+          roomId: message.roomId,
+          readBy: [],
+          mentions: nextAgent ? [nextAgent.name] : [message.sender],
+        };
+
+        messages.push(agentMessage);
+        // 各エージェントの応答後に少し待機
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+      } catch (error) {
+        console.error(`Agent ${agent.name} failed to respond:`, error);
+      }
+    }
+  }
 }
 
 export async function updateMessageReadStatus(
   messageId: number,
-  roomId: string,
   userId: string
 ): Promise<void> {
-  // 指定されたルームのメッセージを取得
-  const roomMessages = await getMessages(roomId);
-
-  // 指定されたメッセージIDとルームIDに一致するメッセージを探す
-  const targetMessage = roomMessages.find(
-    (msg) => msg.id === messageId && msg.roomId === roomId
-  );
-
-  // メッセージが見つかった場合のみ既読状態を更新
-  if (targetMessage) {
-    await updateRedisMessageReadStatus(messageId, targetMessage.roomId, userId);
+  const message = messages.find((m) => m.id === messageId);
+  if (message && !message.readBy.includes(userId)) {
+    message.readBy.push(userId);
   }
 }
 
-// Session関連の関数
-export async function getUserSession(sessionId: string): Promise<User | null> {
-  return getSession(sessionId);
+export async function createRoom(
+  name: string,
+  description?: string
+): Promise<Room> {
+  const room: Room = {
+    id: Date.now().toString(),
+    name,
+    description,
+    inviteCode: Math.random().toString(36).substring(7),
+    members: [],
+    agents: [],
+  };
+  rooms.push(room);
+  return room;
 }
 
-export async function createUserSession(
-  roomId: string,
-  user: User
-): Promise<string> {
-  return saveSession(roomId, user);
-}
-
-export async function removeUserSession(sessionId: string): Promise<void> {
-  await deleteSession(sessionId);
-}
-
-// Agent関連の関数
 export async function createAgent(agent: Agent): Promise<void> {
-  await saveAgent(agent);
-  const room = await getRoom(agent.roomId);
-  if (room) {
-    // エージェントをルームに追加
-    room.agents = [...(room.agents || []), agent];
-    // エージェントをメンバーとして追加
-    const agentUser: User = {
-      id: agent.id,
-      name: `Agent:${agent.name}`,
-    };
-    room.members = [...room.members, agentUser];
-    await saveRoom(room);
+  const room = rooms.find((r) => r.id === agent.roomId);
+  if (!room) throw new Error("Room not found");
 
-    // エージェント追加のシステムメッセージを送信
-    const systemMessage: Message = {
-      id: Date.now(),
-      text: `新しいエージェント「${agent.name}」が追加されました。@${agentUser.name} でメンションできます。`,
-      sender: "System",
-      timestamp: new Date().toISOString(),
-      roomId: agent.roomId,
-      readBy: [],
-      mentions: [],
-    };
-    await saveMessage(systemMessage);
-  }
-}
+  // エージェント名にプレフィックスを追加
+  agent.name = `Agent:${agent.name}`;
 
-export async function getAgentsByRoom(roomId: string): Promise<Agent[]> {
-  return getAgents(roomId);
-}
+  // エージェントをユーザーとしても追加
+  const agentUser: User = {
+    id: agent.id,
+    name: agent.name,
+  };
 
-export async function getRoom(roomId: string): Promise<Room | null> {
-  return await getRoomFromRedis(roomId);
+  room.members.push(agentUser);
+  room.agents.push(agent);
+  agents.push(agent);
 }
