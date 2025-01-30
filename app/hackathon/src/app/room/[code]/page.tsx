@@ -15,6 +15,9 @@ import {
   getUserSession,
   createAgent,
   getRoom,
+  getSavedAgents,
+  saveAgent,
+  getRooms,
 } from "../../actions";
 
 // ReadStatusUpdateの型定義をuseSocket.tsから再利用
@@ -73,28 +76,61 @@ export default function ChatRoom() {
 
   useEffect(() => {
     const checkSession = async () => {
-      const inviteCode = window.location.pathname.split("/").pop() || "";
-      const room = await findRoomByInviteCode(inviteCode);
-      if (!room) {
-        setError("無効な招待コードです");
-        return;
-      }
+      try {
+        const inviteCode = window.location.pathname.split("/").pop() || "";
+        const room = await findRoomByInviteCode(inviteCode);
+        console.log("room", room);
 
-      const sessionId = localStorage.getItem(`session:${room.id}`);
-      if (sessionId) {
-        const user = await getUserSession(sessionId);
-        if (user) {
-          setCurrentUser(user);
-          setCurrentRoom(room);
+        // ルームが存在しない場合のみエラーを表示
+        if (!room) {
+          setError("無効な招待コードです");
           return;
         }
-      }
 
-      setCurrentRoom(room);
+        // ルームが存在する場合は、常にルーム情報を設定
+        setCurrentRoom(room);
+        setError(null);
+
+        // セッション情報の確認
+        const sessionId = localStorage.getItem(`session:${room.id}`);
+        const savedUserName = localStorage.getItem(`userName:${room.id}`);
+
+        if (sessionId && savedUserName) {
+          try {
+            const user = await getUserSession(sessionId);
+            if (user) {
+              // 保存されているユーザー名を使用
+              const updatedUser = {
+                ...user,
+                name: savedUserName,
+              };
+              setCurrentUser(updatedUser);
+              return;
+            }
+          } catch (sessionError) {
+            console.error("セッションの復元に失敗しました:", sessionError);
+            // セッションの復元に失敗した場合は、ユーザー作成画面を表示するため
+            // currentUserはnullのままにします
+          }
+        }
+
+        // セッションがない場合やセッションの復元に失敗した場合は、
+        // currentUserはnullのままで、ユーザー作成画面が表示されます
+      } catch (error) {
+        console.error("ルームの確認中にエラーが発生しました:", error);
+        setError("ルームの確認中にエラーが発生しました");
+      }
     };
 
     checkSession();
   }, []);
+
+  // ユーザー名をlocalStorageに保存
+  useEffect(() => {
+    if (currentUser && currentRoom) {
+      localStorage.setItem(`userName:${currentRoom.id}`, currentUser.name);
+    }
+  }, [currentUser?.name, currentRoom?.id]);
 
   // ルーム情報を定期的に更新
   useEffect(() => {
@@ -285,6 +321,7 @@ export default function ChatRoom() {
       };
       const sessionId = await joinRoom(currentRoom.id, newUser);
       localStorage.setItem(`session:${currentRoom.id}`, sessionId);
+      localStorage.setItem(`userName:${currentRoom.id}`, userName);
       setCurrentUser(newUser);
       setError(null);
     } catch (error) {
@@ -337,6 +374,59 @@ export default function ChatRoom() {
     }
   };
 
+  const [shouldSaveAgent, setShouldSaveAgent] = useState(false);
+  const [creationType, setCreationType] = useState<"new" | "template">("new");
+  const [savedAgents, setSavedAgents] = useState<Agent[]>([]);
+  const [selectedTemplateId, setSelectedTemplateId] = useState<string>("");
+  const [allRooms, setAllRooms] = useState<Room[]>([]);
+
+  // ルーム一覧を取得
+  useEffect(() => {
+    const loadRooms = async () => {
+      try {
+        const loadedRooms = await getRooms();
+        setAllRooms(loadedRooms);
+      } catch (error) {
+        console.error("ルーム一覧の読み込みに失敗しました:", error);
+      }
+    };
+    loadRooms();
+  }, []);
+
+  // エージェント作成モーダルが開かれたときにデータを読み込む
+  useEffect(() => {
+    if (isCreateAgentModalOpen) {
+      const loadData = async () => {
+        try {
+          // 保存済みエージェントを読み込む
+          const agents = await getSavedAgents();
+          setSavedAgents(agents);
+
+          // ルーム一覧を更新
+          const rooms = await getRooms();
+          setAllRooms(rooms);
+        } catch (error) {
+          console.error("データの読み込みに失敗しました:", error);
+        }
+      };
+      loadData();
+    }
+  }, [isCreateAgentModalOpen]);
+
+  // テンプレート選択時の処理
+  useEffect(() => {
+    if (creationType === "template" && selectedTemplateId) {
+      const template = savedAgents.find(
+        (agent) => agent.id === selectedTemplateId
+      );
+      if (template) {
+        setAgentName(template.name);
+        setAgentContext(template.context);
+        setAgentInstructions(template.instructions);
+      }
+    }
+  }, [creationType, selectedTemplateId, savedAgents]);
+
   const handleCreateAgent = async (e: React.FormEvent) => {
     e.preventDefault();
     if (
@@ -351,20 +441,44 @@ export default function ChatRoom() {
 
     try {
       setIsCreatingAgent(true);
-      const newAgent: Agent = {
-        id: Date.now().toString(),
-        name: agentName,
-        context: agentContext,
-        instructions: agentInstructions,
-        roomId: currentRoom.id,
-        createdBy: currentUser.id,
-        createdAt: new Date().toISOString(),
-      };
-      await createAgent(newAgent);
+      let newAgent: Agent;
+      if (creationType === "template" && selectedTemplateId) {
+        // テンプレートから作成する場合、新しいIDと現在のルームIDを設定
+        const template = savedAgents.find(
+          (agent) => agent.id === selectedTemplateId
+        );
+        if (!template) {
+          throw new Error("テンプレートが見つかりません");
+        }
+        newAgent = {
+          ...template,
+          id: Date.now().toString(),
+          roomId: currentRoom.id,
+          createdBy: currentUser.id,
+          createdAt: new Date().toISOString(),
+        };
+      } else {
+        // 新規作成の場合
+        newAgent = {
+          id: Date.now().toString(),
+          name: agentName,
+          context: agentContext,
+          instructions: agentInstructions,
+          roomId: currentRoom.id,
+          createdBy: currentUser.id,
+          createdAt: new Date().toISOString(),
+        };
+      }
+
+      await createAgent(newAgent, shouldSaveAgent);
+
       setIsCreateAgentModalOpen(false);
       setAgentName("");
       setAgentContext("");
       setAgentInstructions("");
+      setShouldSaveAgent(false);
+      setCreationType("new");
+      setSelectedTemplateId("");
       setError(null);
     } catch (error) {
       console.error("エージェント作成中にエラーが発生しました:", error);
@@ -736,6 +850,60 @@ export default function ChatRoom() {
               </button>
             </div>
             <form onSubmit={handleCreateAgent} className="space-y-4">
+              <div className="space-y-4 mb-4">
+                <div className="flex space-x-4">
+                  <label className="flex items-center">
+                    <input
+                      type="radio"
+                      checked={creationType === "new"}
+                      onChange={() => {
+                        setCreationType("new");
+                        setAgentName("");
+                        setAgentContext("");
+                        setAgentInstructions("");
+                      }}
+                      className="mr-2"
+                    />
+                    新規作成
+                  </label>
+                  <label className="flex items-center">
+                    <input
+                      type="radio"
+                      checked={creationType === "template"}
+                      onChange={() => setCreationType("template")}
+                      className="mr-2"
+                    />
+                    テンプレートから作成
+                  </label>
+                </div>
+
+                {creationType === "template" && (
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      テンプレート選択
+                    </label>
+                    <select
+                      value={selectedTemplateId}
+                      onChange={(e) => setSelectedTemplateId(e.target.value)}
+                      className="w-full p-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      disabled={isCreatingAgent}
+                    >
+                      <option value="">テンプレートを選択...</option>
+                      {savedAgents.map((agent) => {
+                        const room = allRooms.find(
+                          (r) => r.id === agent.roomId
+                        );
+                        return (
+                          <option key={agent.id} value={agent.id}>
+                            {agent.name} ({room?.name || "保存済み"})
+                          </option>
+                        );
+                      })}
+                    </select>
+                  </div>
+                )}
+              </div>
+
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">
                   エージェント名
@@ -776,10 +944,32 @@ export default function ChatRoom() {
                   disabled={isCreatingAgent}
                 />
               </div>
+              <div className="flex items-center mb-4">
+                <input
+                  type="checkbox"
+                  checked={shouldSaveAgent}
+                  onChange={(e) => setShouldSaveAgent(e.target.checked)}
+                  className="mr-2"
+                  id="saveAgent"
+                  disabled={isCreatingAgent}
+                />
+                <label htmlFor="saveAgent" className="text-sm text-gray-700">
+                  このエージェントを保存する
+                </label>
+              </div>
+
               <div className="flex justify-end space-x-3">
                 <button
                   type="button"
-                  onClick={() => setIsCreateAgentModalOpen(false)}
+                  onClick={() => {
+                    setIsCreateAgentModalOpen(false);
+                    setAgentName("");
+                    setAgentContext("");
+                    setAgentInstructions("");
+                    setShouldSaveAgent(false);
+                    setCreationType("new");
+                    setSelectedTemplateId("");
+                  }}
                   className="px-4 py-2 text-gray-700 hover:bg-gray-100 rounded-lg transition-colors"
                   disabled={isCreatingAgent}
                 >
@@ -788,7 +978,10 @@ export default function ChatRoom() {
                 <button
                   type="submit"
                   className="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                  disabled={isCreatingAgent}
+                  disabled={
+                    isCreatingAgent ||
+                    (creationType === "template" && !selectedTemplateId)
+                  }
                 >
                   {isCreatingAgent ? "作成中..." : "作成"}
                 </button>

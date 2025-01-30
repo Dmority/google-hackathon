@@ -16,6 +16,19 @@ export async function connect() {
 }
 
 // Room関連の操作
+export async function getAllRooms(): Promise<Room[]> {
+  await connect();
+  const keys = await client.keys("room:*");
+  const roomKeys = keys.filter((key) => !key.includes("invitecode:"));
+  const rooms = await Promise.all(
+    roomKeys.map(async (key) => {
+      const data = await client.get(key);
+      return data ? JSON.parse(data) : null;
+    })
+  );
+  return rooms.filter((room): room is Room => room !== null);
+}
+
 export async function saveRoom(room: Room) {
   await connect();
   await client.set(`room:${room.id}`, JSON.stringify(room));
@@ -49,14 +62,17 @@ export async function updateRoomMembers(roomId: string, members: User[]) {
 // Message関連の操作
 export async function saveMessage(message: Message) {
   await connect();
-  const messageKey = `message:${message.roomId}:${message.id}`;
+  const messageKey = `messages:data:${message.roomId}:${message.id}`;
+  const messageListKey = `messages:list:${message.roomId}`;
+
   await client.set(messageKey, JSON.stringify(message));
-  await client.rPush(`messages:${message.roomId}`, messageKey);
+  await client.rPush(messageListKey, messageKey);
 }
 
 export async function getMessages(roomId: string): Promise<Message[]> {
   await connect();
-  const messageKeys = await client.lRange(`messages:${roomId}`, 0, -1);
+  const messageListKey = `messages:list:${roomId}`;
+  const messageKeys = await client.lRange(messageListKey, 0, -1);
   const messages = await Promise.all(
     messageKeys.map(async (key) => {
       const message = await client.get(key);
@@ -72,7 +88,7 @@ export async function updateMessageReadStatus(
   userId: string
 ) {
   await connect();
-  const messageKey = `message:${roomId}:${messageId}`;
+  const messageKey = `messages:data:${roomId}:${messageId}`;
   const message = await client.get(messageKey);
 
   if (message) {
@@ -106,11 +122,51 @@ export async function deleteSession(sessionId: string): Promise<void> {
 // Agent関連の操作
 export async function saveAgent(agent: Agent) {
   await connect();
-  await client.rPush(`agents:${agent.roomId}`, JSON.stringify(agent));
+  // エージェントをroomに追加
+  const room = await getRoom(agent.roomId);
+  if (!room) throw new Error("Room not found");
+
+  // エージェントをユーザーとしても追加
+  const agentUser: User = {
+    id: agent.id,
+    name: agent.name,
+  };
+
+  // roomのagentsとmembersを更新
+  if (!room.agents) room.agents = [];
+  if (!room.members) room.members = [];
+
+  room.agents.push(agent);
+  room.members.push(agentUser);
+
+  // 更新されたroomを保存
+  await saveRoom(room);
 }
 
 export async function getAgents(roomId: string): Promise<Agent[]> {
   await connect();
-  const agents = await client.lRange(`agents:${roomId}`, 0, -1);
-  return agents.map((agent) => JSON.parse(agent));
+  const room = await getRoom(roomId);
+  return room?.agents || [];
+}
+
+// 保存済みエージェント関連の操作
+export async function saveTemplateAgent(agent: Agent) {
+  await connect();
+  await client.set(`template:agent:${agent.id}`, JSON.stringify(agent));
+  // テンプレートエージェントのIDリストを更新
+  await client.sAdd("template:agents", agent.id);
+}
+
+export async function getAllTemplateAgents(): Promise<Agent[]> {
+  await connect();
+  // すべてのテンプレートエージェントのIDを取得
+  const agentIds = await client.sMembers("template:agents");
+  // 各エージェントの詳細を取得
+  const agents = await Promise.all(
+    agentIds.map(async (id) => {
+      const data = await client.get(`template:agent:${id}`);
+      return data ? JSON.parse(data) : null;
+    })
+  );
+  return agents.filter((agent): agent is Agent => agent !== null);
 }
