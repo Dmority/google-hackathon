@@ -307,7 +307,10 @@ ${nextAgent ? `\nPlease address your response to @${nextAgent.name}` : ""}
         });
 
         if (!response.ok) {
-          throw new Error("Failed to get response from agent");
+          const errorData = await response.json();
+          throw new Error(
+            errorData.error || "Failed to get response from agent"
+          );
         }
 
         const data = await response.json();
@@ -322,10 +325,27 @@ ${nextAgent ? `\nPlease address your response to @${nextAgent.name}` : ""}
         };
 
         messages.push(agentMessage);
+        await saveMessageToRedis(agentMessage);
         // 各エージェントの応答後に少し待機
         await new Promise((resolve) => setTimeout(resolve, 1000));
       } catch (error) {
         console.error(`Agent ${agent.name} failed to respond:`, error);
+
+        // エラーメッセージを送信
+        const errorMessage: Message = {
+          id: Date.now() + Math.random(),
+          text: `エラーが発生しました: ${
+            error instanceof Error ? error.message : "応答の生成に失敗しました"
+          }`,
+          sender: "System",
+          timestamp: new Date().toISOString(),
+          roomId: message.roomId,
+          readBy: [],
+          mentions: [message.sender],
+        };
+
+        messages.push(errorMessage);
+        await saveMessageToRedis(errorMessage);
       }
     }
   }
