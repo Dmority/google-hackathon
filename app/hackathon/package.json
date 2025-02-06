@@ -10,6 +10,7 @@
   },
   "dependencies": {
     "@google-cloud/vertexai": "^1.9.2",
+    "@tanstack/react-query": "^5.66.0",
     "@types/redis": "^4.0.10",
     "@types/socket.io": "^3.0.1",
     "ioredis": "^5.4.2",

@@ -1,7 +1,7 @@
 "use server";
 
 import { createClient } from "redis";
-import { Message, Room, User, Agent } from "../app/actions";
+import { Message, Room, User, Agent } from "../types/index";
 
 const client = createClient({
   url: process.env.REDIS_URL || "redis://localhost:6379",
@@ -126,10 +126,10 @@ export async function saveAgent(agent: Agent) {
   const room = await getRoom(agent.roomId);
   if (!room) throw new Error("Room not found");
 
-  // エージェントをユーザーとしても追加
+  // エージェントをユーザーとしても追加(名前の重複を防ぐ)
   const agentUser: User = {
     id: agent.id,
-    name: agent.name,
+    name: agent.name.startsWith("Agent:") ? agent.name : `Agent:${agent.name}`,
   };
 
   // roomのagentsとmembersを更新

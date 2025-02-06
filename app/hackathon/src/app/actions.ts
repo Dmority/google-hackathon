@@ -1,37 +1,3 @@
-export interface Message {
-  id: number;
-  text: string;
-  sender: string;
-  timestamp: string;
-  roomId: string;
-  readBy: string[];
-  mentions: string[];
-}
-
-export interface User {
-  id: string;
-  name: string;
-}
-
-export interface Room {
-  id: string;
-  name: string;
-  description?: string;
-  inviteCode: string;
-  members: User[];
-  agents: Agent[];
-}
-
-export interface Agent {
-  id: string;
-  name: string;
-  context: string;
-  instructions: string;
-  roomId: string;
-  createdBy: string;
-  createdAt: string;
-}
-
 import {
   saveRoom as saveRoomToRedis,
   getRoomByInviteCode as getRoomByInviteCodeFromRedis,
@@ -45,6 +11,7 @@ import {
   getAllTemplateAgents,
   saveTemplateAgent,
 } from "../lib/redis";
+import { Room, Message, User, Agent } from "../types/index";
 
 // Redis client is used to store and retrieve data
 let messages: Message[] = [];
@@ -58,8 +25,8 @@ let rooms: Room[] = [
     agents: [],
   },
 ];
-let agents: Agent[] = [];
-let savedAgents: Agent[] = [];
+const agents: Agent[] = [];
+const savedAgents: Agent[] = [];
 
 export async function getRooms(): Promise<Room[]> {
   // まずRedisからルーム一覧を取得

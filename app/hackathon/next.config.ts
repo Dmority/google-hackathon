@@ -14,6 +14,10 @@ const nextConfig: NextConfig = {
     }
     return config;
   },
+  api: {
+    bodyParser: false,
+    externalResolver: true,
+  },
 };
 
 export default nextConfig;

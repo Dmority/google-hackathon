@@ -1,31 +1,13 @@
 import type { NextApiRequest, NextApiResponse } from "next";
-import cors from "cors";
 import type { Socket as NetSocket } from "net";
 import type { Server as HttpServer } from "http";
 import { Server as SocketServer } from "socket.io";
-import type { Message } from "../../src/app/actions";
-
-interface ServerToClientEvents {
-  "message-received": (message: Message) => void;
-  "read-status-updated": (updates: ReadStatusUpdate[]) => void;
-}
-
-interface ClientToServerEvents {
-  "join-room": (roomId: string) => void;
-  "leave-room": (roomId: string) => void;
-  "new-message": (message: Message) => void;
-  "messages-read": (data: {
-    messageIds: number[];
-    roomId: string;
-    userId: string;
-  }) => void;
-}
-
-interface ReadStatusUpdate {
-  messageId: number;
-  roomId: string;
-  userId: string;
-}
+import type { Message } from "../../src/types";
+import {
+  ReadStatusUpdate,
+  ServerToClientEvents,
+  ClientToServerEvents,
+} from "@/types/socket";
 
 type ReseponseWebSocket = NextApiResponse & {
   socket: NetSocket & {
@@ -35,40 +17,63 @@ type ReseponseWebSocket = NextApiResponse & {
   };
 };
 
-const corsMiddleware = cors();
-
 export default async function SocketHandler(
   req: NextApiRequest,
   res: ReseponseWebSocket
 ) {
   if (req.method !== "GET") {
+    console.log("Method not allowed:", req.method);
     return res.status(405).end();
+  }
+
+  if (!res.socket?.server) {
+    console.log("No socket server");
+    return res.status(500).end();
   }
 
   try {
     if (res.socket.server.io) {
       console.log("Socket.IO server already running");
-      return res.send("already-set-up");
+      res.end();
+      return;
     }
 
     console.log("Setting up Socket.IO server...");
     const io = new SocketServer<ClientToServerEvents, ServerToClientEvents>(
       res.socket.server,
       {
-        path: "/api/socket",
-        addTrailingSlash: false,
+        path: "/api/socket/",
         transports: ["websocket"],
-        cors: {
-          origin: true,
-          methods: ["GET", "POST"],
-          credentials: true,
-        },
         allowEIO3: true,
-        pingTimeout: 30000,
-        pingInterval: 15000,
-        connectTimeout: 30000,
+        pingTimeout: 60000,
+        pingInterval: 25000,
+        connectTimeout: 60000,
+        cors: {
+          origin: "*",
+          methods: ["GET", "POST"],
+        },
+        allowRequest: (req, callback) => {
+          callback(null, true);
+        },
       }
     );
+
+    // エラーイベントのハンドリング
+    io.engine.on("connection_error", (err) => {
+      console.error("Connection error:", err);
+    });
+
+    // 接続数の監視
+    let connectionCount = 0;
+    io.engine.on("connection", () => {
+      connectionCount++;
+      console.log(`Active connections: ${connectionCount}`);
+    });
+
+    io.engine.on("disconnect", () => {
+      connectionCount--;
+      console.log(`Active connections: ${connectionCount}`);
+    });
 
     // ルームごとのユーザー管理
     const rooms = new Map<string, Set<string>>();
@@ -118,17 +123,15 @@ export default async function SocketHandler(
       });
     });
 
-    await new Promise<void>((resolve) => {
-      corsMiddleware(req, res, () => {
-        res.socket.server.io = io;
-        console.log("Socket.IO server initialized");
-        resolve();
-      });
-    });
+    res.socket.server.io = io;
+    console.log("Socket.IO server initialized");
 
     res.end();
   } catch (error) {
     console.error("Socket initialization error:", error);
+    if (error instanceof Error) {
+      console.error("Error details:", error.message, error.stack);
+    }
     res.status(500).end();
   }
 }

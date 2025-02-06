@@ -1,40 +1,27 @@
-import { useEffect, useRef, useCallback } from "react";
-import { io, Socket } from "socket.io-client";
-import { Message } from "../app/actions";
-
-interface ReadStatusUpdate {
-  messageId: number;
-  roomId: string;
-  userId: string;
-}
+import { useEffect, useRef, useCallback, useState } from "react";
+import { Socket } from "socket.io-client";
+import { Message } from "../types";
+import {
+  ServerToClientEvents,
+  ClientToServerEvents,
+  ReadStatusUpdate,
+} from "../types/socket";
+import {
+  SOCKET_EVENTS,
+  SOCKET_CONNECTION_CONFIG,
+  ERROR_MESSAGES,
+} from "../constants";
+import {
+  initializeSocketConnection,
+  setupSocketEventHandlers,
+  cleanupSocketConnection,
+} from "../lib/utils/socket";
 
 interface UseSocketProps {
   roomId: string;
   onNewMessage?: (message: Message) => void;
   onReadStatusUpdate?: (data: ReadStatusUpdate | ReadStatusUpdate[]) => void;
 }
-
-interface ServerToClientEvents {
-  "message-received": (message: Message) => void;
-  "read-status-updated": (updates: ReadStatusUpdate[]) => void;
-}
-
-interface ClientToServerEvents {
-  "join-room": (roomId: string) => void;
-  "leave-room": (roomId: string) => void;
-  "new-message": (message: Message) => void;
-  "messages-read": (data: {
-    messageIds: number[];
-    roomId: string;
-    userId: string;
-  }) => void;
-}
-
-// グローバルなWebSocket状態管理
-let globalSocket: Socket<ServerToClientEvents, ClientToServerEvents> | null =
-  null;
-let isInitializing = false;
-let initializedRooms = new Set<string>();
 
 export function useSocket({
   roomId,
@@ -45,100 +32,41 @@ export function useSocket({
     ServerToClientEvents,
     ClientToServerEvents
   > | null>(null);
+  const [isConnected, setIsConnected] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const initSocket = useCallback(async () => {
-    if (!roomId) return;
+    if (!roomId || socketRef.current?.connected) return;
 
     try {
-      if (!globalSocket && !isInitializing) {
-        isInitializing = true;
-        try {
-          // 現在のホストとポートを取得
-          // Socket.IOの初期化前にAPIエンドポイントを呼び出し
-          await fetch("/api/socket");
+      // Socket.IOの初期化前にAPIエンドポイントを呼び出し
+      await fetch("/api/socket/", { method: "GET" });
 
-          globalSocket = io(window.location.origin, {
-            path: "/api/socket",
-            transports: ["websocket"],
-            reconnectionDelay: 1000,
-            reconnectionDelayMax: 5000,
-            timeout: 30000,
-            reconnection: true,
-            reconnectionAttempts: 10,
-            forceNew: true,
-            withCredentials: true,
-          });
+      const socket = await initializeSocketConnection(
+        window.location.origin,
+        SOCKET_CONNECTION_CONFIG
+      );
 
-          // エラーハンドリングの強化
-          globalSocket.on("connect_error", (error: Error) => {
-            console.error("[WebSocket] Connection error:", error.message);
-            isInitializing = false;
-            globalSocket?.connect();
-          });
+      socketRef.current = socket;
+      setIsConnected(true);
+      setError(null);
 
-          globalSocket.on("connect", () => {
-            console.log("[WebSocket] Connected");
-            isInitializing = false;
-          });
-
-          globalSocket.on("disconnect", (reason: string) => {
-            console.log("[WebSocket] Disconnected:", reason);
-            if (
-              reason === "io server disconnect" ||
-              reason === "transport close"
-            ) {
-              globalSocket?.connect();
-            }
-          });
-
-          // 定期的な接続確認
-          setInterval(() => {
-            if (!globalSocket?.connected) {
-              console.log("[WebSocket] Reconnecting...");
-              globalSocket?.connect();
-            }
-          }, 3000);
-        } catch (error) {
-          if (process.env.NODE_ENV === "development") {
-            console.debug("[WebSocket] Initialization error:", error);
+      // イベントハンドラの設定
+      setupSocketEventHandlers(socket, {
+        onNewMessage,
+        onReadStatusUpdate: (updates) => {
+          if (onReadStatusUpdate) {
+            onReadStatusUpdate(Array.isArray(updates) ? updates : [updates]);
           }
-          isInitializing = false;
-          throw error;
-        }
-      }
+        },
+      });
 
-      if (globalSocket) {
-        socketRef.current = globalSocket;
-
-        // 既存のリスナーを削除
-        globalSocket.off("message-received");
-        globalSocket.off("read-status-updated");
-
-        // ルームに参加（再接続時のために毎回実行）
-        globalSocket.emit("join-room", roomId);
-        initializedRooms.add(roomId);
-
-        // メッセージ受信のリスナー
-        if (onNewMessage) {
-          globalSocket.on("message-received", (message) => {
-            console.log("[WebSocket] Message received:", message);
-            onNewMessage(message);
-          });
-        }
-
-        // 既読状態更新のリスナー
-        if (onReadStatusUpdate) {
-          globalSocket.on("read-status-updated", (updates) => {
-            console.log("[WebSocket] Read status updated:", updates);
-            onReadStatusUpdate(updates);
-          });
-        }
-      }
+      // ルームに参加
+      socket.emit(SOCKET_EVENTS.JOIN_ROOM, roomId);
     } catch (error) {
-      if (process.env.NODE_ENV === "development") {
-        console.debug("[WebSocket] Initialization error:", error);
-      }
-      isInitializing = false;
+      console.error("[WebSocket] Initialization error:", error);
+      setError(ERROR_MESSAGES.SOCKET_CONNECTION_ERROR);
+      setIsConnected(false);
     }
   }, [roomId, onNewMessage, onReadStatusUpdate]);
 
@@ -146,32 +74,41 @@ export function useSocket({
     initSocket();
 
     return () => {
-      if (socketRef.current && initializedRooms.has(roomId)) {
-        socketRef.current.emit("leave-room", roomId);
-        socketRef.current.off("message-received");
-        socketRef.current.off("read-status-updated");
-        initializedRooms.delete(roomId);
+      if (socketRef.current?.connected) {
+        cleanupSocketConnection(socketRef.current, roomId);
+        socketRef.current.disconnect();
+        socketRef.current = null;
+        setIsConnected(false);
       }
     };
   }, [roomId, initSocket]);
 
-  const sendMessage = useCallback((message: Message) => {
-    if (socketRef.current) {
-      socketRef.current.emit("new-message", message);
-    }
-  }, []);
+  const sendMessage = useCallback(
+    (message: Message) => {
+      if (socketRef.current && isConnected) {
+        socketRef.current.emit(SOCKET_EVENTS.NEW_MESSAGE, message);
+      }
+    },
+    [isConnected]
+  );
 
   const updateReadStatus = useCallback(
     (messageIds: number[], userId: string) => {
-      if (socketRef.current) {
-        socketRef.current.emit("messages-read", { messageIds, roomId, userId });
+      if (socketRef.current && isConnected) {
+        socketRef.current.emit(SOCKET_EVENTS.MESSAGES_READ, {
+          messageIds,
+          roomId,
+          userId,
+        });
       }
     },
-    [roomId]
+    [roomId, isConnected]
   );
 
   return {
     sendMessage,
     updateReadStatus,
+    isConnected,
+    error,
   };
 }

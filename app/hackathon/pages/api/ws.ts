@@ -2,7 +2,7 @@ import type { Server as HTTPServer } from "http";
 import type { Socket as NetSocket } from "net";
 import { Server as IOServer } from "socket.io";
 import type { NextApiRequest, NextApiResponse } from "next";
-import { Message } from "../../src/app/actions";
+import { Message } from "../../src/types";
 
 interface ServerToClientEvents {
   "message-received": (message: Message) => void;
@@ -97,11 +97,6 @@ const handler = async (req: NextApiRequest, res: NextApiResponseWithSocket) => {
     pingTimeout: 60000,
     pingInterval: 25000,
     transports: ["websocket", "polling"],
-    cors: {
-      origin: "*",
-      methods: ["GET", "POST"],
-      credentials: true,
-    },
   });
 
   // 接続中のクライアント数を追跡
