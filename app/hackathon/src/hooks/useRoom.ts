@@ -1,3 +1,4 @@
+import { v4 as uuidv4 } from "uuid";
 import { useState, useEffect, useCallback } from "react";
 import { Room, User } from "../types/index";
 import {
@@ -101,7 +102,7 @@ export function useRoom(inviteCode: string): UseRoomResult {
       try {
         // UUIDv4のような形式でIDを生成
         const newUser = {
-          id: crypto.randomUUID(),
+          id: uuidv4(),
           name: userName,
         };
         const sessionId = await joinRoomAction(currentRoom.id, newUser);

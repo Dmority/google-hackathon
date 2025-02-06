@@ -81,7 +81,7 @@ export function useSocket({
         setIsConnected(false);
       }
     };
-  }, [roomId, initSocket]);
+  }, [roomId]);
 
   const sendMessage = useCallback(
     (message: Message) => {

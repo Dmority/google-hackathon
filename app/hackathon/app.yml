@@ -1,3 +1,10 @@
+apiVersion: cloud.google.com/v1
+kind: BackendConfig
+metadata:
+  name: myapp-backend-config
+spec:
+  timeoutSec: 720000
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -14,10 +21,12 @@ spec:
     spec:
       containers:
         - name: web-app
-          image: asia-northeast1-docker.pkg.dev/handson-446606/app/web:0.01
+          image: asia-northeast1-docker.pkg.dev/handson-446606/app/web:0.03
           env:
-            - name: REDIS_HOST
-              value: redis-service
+            - name: REDIS_URL
+              value: "redis://redis-service:6379"
+            - name: GOOGLE_CLOUD_PROJECT_ID
+              value: handson-446606
             - name: GOOGLE_CLOUD_LOCATION
               value: us-central1
           ports:
@@ -27,6 +36,8 @@ apiVersion: v1
 kind: Service
 metadata:
   name: web-app-service
+  annotations:
+    cloud.google.com/backend-config: '{"default": "myapp-backend-config"}'
 spec:
   type: ClusterIP
   selector:
