@@ -10,7 +10,8 @@ spec:
     healthyThreshold: 1
     unhealthyThreshold: 2
     type: HTTP
-    port: 80
+    port: 3000
+    requestPath: /api/health
 ---
 apiVersion: networking.gke.io/v1
 kind: ManagedCertificate
@@ -42,7 +43,7 @@ spec:
       serviceAccountName: web-pods-service-account
       containers:
         - name: web-app
-          image: asia-northeast1-docker.pkg.dev/handson-446606/app/web:0.06
+          image: asia-northeast1-docker.pkg.dev/handson-446606/app/web:0.07
           env:
             - name: REDIS_URL
               value: "redis://redis-service:6379"
@@ -119,7 +120,7 @@ metadata:
     kubernetes.io/ingress.class: "gce"
     kubernetes.io/ingress.global-static-ip-name: mylb
     networking.gke.io/managed-certificates: managed-cert
-    kubernetes.io/ingress.allow-http: "false"
+    kubernetes.io/ingress.allow-http: "true"
 spec:
   rules:
     - http:
