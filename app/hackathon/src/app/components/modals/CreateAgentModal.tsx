@@ -72,7 +72,7 @@ export function CreateAgentModal({
 
     try {
       const newAgent = {
-        name: `Agent:${agentName.replace(/^Agent:+/, "")}`,
+        name: agentName,
         context: agentContext,
         instructions: agentInstructions,
         roomId: currentRoomId,

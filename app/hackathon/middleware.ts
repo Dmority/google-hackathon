@@ -11,6 +11,11 @@ export const config = {
 };
 
 export function middleware(req: NextRequest) {
+  // Skip authentication for health check endpoint
+  if (req.nextUrl.pathname === "/api/health") {
+    return NextResponse.next();
+  }
+
   try {
     const basicAuth = req.headers.get("authorization");
 

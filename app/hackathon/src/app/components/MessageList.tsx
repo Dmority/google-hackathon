@@ -90,16 +90,14 @@ export function MessageList({
                     } cursor-pointer hover:underline hover:bg-gray-100 px-2 py-1 rounded transition-colors inline-block`}
                     onClick={() => {
                       if (message.sender !== currentUser?.name) {
-                        const cleanName = message.sender.replace(
-                          /^Agent:+/,
-                          ""
-                        );
+                        const cleanName =
+                          "Agent:" + message.sender.replace(/Agent:/g, "");
                         onMentionUser(cleanName);
                       }
                     }}
                   >
                     {message.sender.startsWith("Agent:")
-                      ? message.sender.replace("Agent:", "")
+                      ? "Agent:" + message.sender.replace(/Agent:/g, "")
                       : message.sender}
                   </span>
                 )}

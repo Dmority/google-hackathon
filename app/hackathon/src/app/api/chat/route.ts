@@ -13,12 +13,11 @@ const vertex = new VertexAI({
   location,
 });
 
-//const model = "gemini-1.5-pro";
-const model = "gemini-1.5-flash";
+const model = "gemini-1.5-pro";
 
 export async function POST(req: NextRequest) {
   try {
-    const { prompt } = await req.json();
+    const { prompt, agent } = await req.json();
 
     // タイムアウト処理を追加
     const timeout = new Promise((_, reject) =>
@@ -32,6 +31,7 @@ export async function POST(req: NextRequest) {
         temperature: 0.9,
         topP: 1,
       },
+      safetySettings: [],
     });
 
     const chat = generativeModel.startChat({
@@ -39,7 +39,22 @@ export async function POST(req: NextRequest) {
         {
           role: "user",
           parts: [
-            { text: "あなたはユーザーをサポートするAIアシスタントです。" },
+            {
+              text: `あなたの設定:
+名前: ${agent.name}
+コンテキスト: ${agent.context}
+指示: ${agent.instructions}
+
+上記の設定に従って応答してください。`,
+            },
+          ],
+        },
+        {
+          role: "assistant",
+          parts: [
+            {
+              text: `承知しました。私は${agent.name}として、与えられたコンテキストと指示に従って応答いたします。`,
+            },
           ],
         },
       ],

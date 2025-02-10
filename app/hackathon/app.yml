@@ -4,6 +4,21 @@ metadata:
   name: myapp-backend-config
 spec:
   timeoutSec: 720000
+  healthCheck:
+    checkIntervalSec: 30
+    timeoutSec: 5
+    healthyThreshold: 1
+    unhealthyThreshold: 2
+    type: HTTP
+    port: 80
+---
+apiVersion: networking.gke.io/v1
+kind: ManagedCertificate
+metadata:
+  name: managed-cert
+spec:
+  domains:
+    - chat.google.memenono.com
 ---
 apiVersion: v1
 kind: ServiceAccount
@@ -27,7 +42,7 @@ spec:
       serviceAccountName: web-pods-service-account
       containers:
         - name: web-app
-          image: asia-northeast1-docker.pkg.dev/handson-446606/app/web:0.05
+          image: asia-northeast1-docker.pkg.dev/handson-446606/app/web:0.06
           env:
             - name: REDIS_URL
               value: "redis://redis-service:6379"
@@ -100,6 +115,11 @@ apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
   name: web-app-ingress
+  annotations:
+    kubernetes.io/ingress.class: "gce"
+    kubernetes.io/ingress.global-static-ip-name: mylb
+    networking.gke.io/managed-certificates: managed-cert
+    kubernetes.io/ingress.allow-http: "false"
 spec:
   rules:
     - http:

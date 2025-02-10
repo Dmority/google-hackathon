@@ -251,8 +251,6 @@ export async function sendMessage(message: Message): Promise<void> {
           },
           body: JSON.stringify({
             prompt: `
-Context: ${agent.context}
-Instructions: ${agent.instructions}
 Recent Conversation:
 ${conversationHistory}
 User Message: ${message.text}
@@ -270,6 +268,11 @@ ${mentionGroups
 }
 ${nextAgent ? `\nPlease address your response to @${nextAgent.name}` : ""}
 `,
+            agent: {
+              name: agent.name,
+              context: agent.context,
+              instructions: agent.instructions,
+            },
           }),
         });
 
