@@ -1,7 +1,7 @@
 import { VertexAI } from "@google-cloud/vertexai";
 import { NextRequest, NextResponse } from "next/server";
 
-const projectId = process.env.GOOGLE_CLOUD_PROJECT_ID;
+const projectId = process.env.GOOGLE_CLOUD_PROJECT_ID || "default";
 const location = process.env.GOOGLE_CLOUD_LOCATION || "us-central1";
 
 if (!projectId) {

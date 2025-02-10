@@ -5,6 +5,11 @@ metadata:
 spec:
   timeoutSec: 720000
 ---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: web-pods-service-account
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -19,9 +24,10 @@ spec:
       labels:
         app: web-app
     spec:
+      serviceAccountName: web-pods-service-account
       containers:
         - name: web-app
-          image: asia-northeast1-docker.pkg.dev/handson-446606/app/web:0.03
+          image: asia-northeast1-docker.pkg.dev/handson-446606/app/web:0.05
           env:
             - name: REDIS_URL
               value: "redis://redis-service:6379"
@@ -29,6 +35,16 @@ spec:
               value: handson-446606
             - name: GOOGLE_CLOUD_LOCATION
               value: us-central1
+            - name: BASIC_AUTH_USER
+              valueFrom:
+                secretKeyRef:
+                  name: basic
+                  key: username
+            - name: BASIC_AUTH_PWD
+              valueFrom:
+                secretKeyRef:
+                  name: basic
+                  key: password
           ports:
             - containerPort: 3000
 ---

@@ -3,6 +3,10 @@ variable "project_id" {
   default     = "handson-446606"
 }
 
+data "google_project" "this" {
+    project_id = var.project_id
+}
+
 
 resource "google_compute_network" "main" {
     name = "main"
@@ -33,7 +37,7 @@ resource "google_compute_router_nat" "nat" {
   source_subnetwork_ip_ranges_to_nat = "ALL_SUBNETWORKS_ALL_IP_RANGES"
 }
 
-# Create Service Account for GKE nodes
+# Service Account for GKE nodes
 resource "google_service_account" "gke" {
   account_id   = "gke-service-account"
   display_name = "GKE Service Account"
@@ -41,9 +45,14 @@ resource "google_service_account" "gke" {
 
 # Grant necessary roles to the service account
 resource "google_project_iam_member" "gke_roles" {
-  project = "handson-446606"
+  project = var.project_id
   role    = "roles/container.nodeServiceAccount"
   member  = "serviceAccount:${google_service_account.gke.email}"
+}
+resource "google_project_iam_member" "ai_roles" {
+  project = var.project_id
+  role    = "roles/aiplatform.user"
+  member   = "principal://iam.googleapis.com/projects/${data.google_project.this.number}/locations/global/workloadIdentityPools/${var.project_id}.svc.id.goog/subject/ns/default/sa/web-pods-service-account"
 }
 
 # Create GKE cluster
