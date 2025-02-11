@@ -353,6 +353,63 @@ export async function createRoom(
   return room;
 }
 
+export async function updateAgent(
+  agent: Agent,
+  shouldSave: boolean = true
+): Promise<void> {
+  const room = await getRoom(agent.roomId);
+  if (!room) throw new Error("Room not found");
+
+  // エージェント名が"Agent:"で始まっていない場合は追加
+  if (!agent.name.startsWith("Agent:")) {
+    agent.name = `Agent:${agent.name}`;
+  }
+
+  // エージェントをユーザーとしても更新
+  const agentUser: User = {
+    id: agent.id,
+    name: agent.name,
+  };
+
+  // 既存のエージェントを更新
+  const agentIndex = agents.findIndex((a) => a.id === agent.id);
+  if (agentIndex !== -1) {
+    agents[agentIndex] = { ...agent };
+  }
+
+  // エージェントをRedisとsavedAgentsに保存
+  const savedAgentIndex = savedAgents.findIndex((a) => a.id === agent.id);
+  if (savedAgentIndex !== -1) {
+    savedAgents[savedAgentIndex] = { ...agent };
+  }
+  await saveAgentToRedis(agent);
+
+  // shouldSaveがtrueの場合のみテンプレートとして保存
+  if (shouldSave) {
+    await saveTemplateAgent(agent);
+  }
+
+  // 部屋のエージェントを更新
+  const roomAgentIndex = room.agents.findIndex((a) => a.id === agent.id);
+  if (roomAgentIndex !== -1) {
+    room.agents[roomAgentIndex] = { ...agent };
+  }
+
+  // 部屋のメンバーを更新
+  const memberIndex = room.members.findIndex((m) => m.id === agent.id);
+  if (memberIndex !== -1) {
+    room.members[memberIndex] = agentUser;
+  }
+
+  // 更新されたroomをメモリとRedisに保存
+  const memoryRoom = rooms.find((r) => r.id === agent.roomId);
+  if (memoryRoom) {
+    memoryRoom.agents = room.agents;
+    memoryRoom.members = room.members;
+  }
+  await saveRoomToRedis(room);
+}
+
 export async function createAgent(
   agent: Agent,
   shouldSave: boolean = true
@@ -370,13 +427,13 @@ export async function createAgent(
     name: agent.name,
   };
 
-  // エージェントをグローバルリストに追加
+  // エージェントをグローバルリストとRedisに追加
   agents.push({ ...agent });
+  savedAgents.push({ ...agent });
+  await saveAgentToRedis(agent);
 
-  // shouldSaveがtrueの場合のみRedisとsavedAgentsに保存
+  // shouldSaveがtrueの場合のみテンプレートとして保存
   if (shouldSave) {
-    savedAgents.push({ ...agent });
-    await saveAgentToRedis(agent);
     await saveTemplateAgent(agent);
   }
 

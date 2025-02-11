@@ -41,6 +41,7 @@ export default function ChatRoom() {
     isCreating,
     error: agentError,
     createAgent,
+    updateExistingAgent,
   } = useAgent();
 
   // ユーザー名の更新処理
@@ -119,6 +120,7 @@ export default function ChatRoom() {
             setEditingAgentName(null);
           }}
           onCreateAgent={createAgent}
+          onUpdateAgent={updateExistingAgent}
           savedAgents={savedAgents}
           allRooms={allRooms}
           currentRoomId={currentRoom?.id || ""}

@@ -4,6 +4,7 @@ import {
   createAgent as createAgentAction,
   getSavedAgents as getSavedAgentsAction,
   getRooms,
+  updateAgent,
 } from "../app/actions";
 
 interface UseAgentResult {
@@ -12,6 +13,11 @@ interface UseAgentResult {
   isCreating: boolean;
   error: string | null;
   createAgent: (
+    agent: Omit<Agent, "id" | "createdAt">,
+    shouldSave: boolean
+  ) => Promise<void>;
+  updateExistingAgent: (
+    agentId: string,
     agent: Omit<Agent, "id" | "createdAt">,
     shouldSave: boolean
   ) => Promise<void>;
@@ -78,11 +84,45 @@ export function useAgent(): UseAgentResult {
     [isCreating, loadData]
   );
 
+  const updateExistingAgent = useCallback(
+    async (
+      agentId: string,
+      agent: Omit<Agent, "id" | "createdAt">,
+      shouldSave: boolean = false
+    ) => {
+      if (isCreating) return;
+
+      setIsCreating(true);
+      try {
+        await updateAgent(
+          {
+            ...agent,
+            id: agentId,
+            createdAt: new Date().toISOString(),
+          },
+          shouldSave
+        );
+
+        // エージェントの更新後にデータを再読み込み
+        await loadData();
+        setError(null);
+      } catch (error) {
+        console.error("エージェント更新中にエラーが発生しました:", error);
+        setError("エージェントの更新に失敗しました");
+        throw error;
+      } finally {
+        setIsCreating(false);
+      }
+    },
+    [isCreating, loadData]
+  );
+
   return {
     savedAgents,
     allRooms,
     isCreating,
     error,
     createAgent,
+    updateExistingAgent,
   };
 }

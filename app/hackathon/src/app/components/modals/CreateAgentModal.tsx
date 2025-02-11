@@ -8,6 +8,11 @@ interface CreateAgentModalProps {
     agent: Omit<Agent, "id" | "createdAt">,
     shouldSave: boolean
   ) => Promise<void>;
+  onUpdateAgent?: (
+    agentId: string,
+    agent: Omit<Agent, "id" | "createdAt">,
+    shouldSave: boolean
+  ) => Promise<void>;
   savedAgents: Agent[];
   allRooms: Room[];
   currentRoomId: string;
@@ -20,6 +25,7 @@ export function CreateAgentModal({
   isOpen,
   onClose,
   onCreateAgent,
+  onUpdateAgent,
   savedAgents,
   allRooms,
   currentRoomId,
@@ -71,7 +77,7 @@ export function CreateAgentModal({
       return;
 
     try {
-      const newAgent = {
+      const agent = {
         name: agentName,
         context: agentContext,
         instructions: agentInstructions,
@@ -79,10 +85,30 @@ export function CreateAgentModal({
         createdBy: currentUserId,
       };
 
-      await onCreateAgent(newAgent, shouldSaveAgent);
+      if (editingAgentName) {
+        // 編集中のエージェントを検索
+        const existingAgent = savedAgents.find((a) => {
+          const cleanAgentName = a.name.replace(/^Agent:+/, "");
+          const cleanEditingName = editingAgentName.replace(/^Agent:+/, "");
+          return cleanAgentName === cleanEditingName;
+        });
+
+        if (existingAgent && onUpdateAgent) {
+          // 既存のエージェントを更新
+          await onUpdateAgent(existingAgent.id, agent, shouldSaveAgent);
+        }
+      } else {
+        // 新規作成
+        await onCreateAgent(agent, shouldSaveAgent);
+      }
       handleClose();
     } catch (error) {
-      console.error("エージェント作成中にエラーが発生しました:", error);
+      console.error(
+        editingAgentName
+          ? "エージェント更新中にエラーが発生しました:"
+          : "エージェント作成中にエラーが発生しました:",
+        error
+      );
     }
   };
 
@@ -114,58 +140,60 @@ export function CreateAgentModal({
           </button>
         </div>
         <form onSubmit={handleSubmit} className="space-y-4">
-          <div className="space-y-4 mb-4">
-            <div className="flex space-x-4">
-              <label className="flex items-center">
-                <input
-                  type="radio"
-                  checked={creationType === "new"}
-                  onChange={() => {
-                    setCreationType("new");
-                    setAgentName("");
-                    setAgentContext("");
-                    setAgentInstructions("");
-                  }}
-                  className="mr-2"
-                />
-                新規作成
-              </label>
-              <label className="flex items-center">
-                <input
-                  type="radio"
-                  checked={creationType === "template"}
-                  onChange={() => setCreationType("template")}
-                  className="mr-2"
-                />
-                テンプレートから作成
-              </label>
-            </div>
-
-            {creationType === "template" && (
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  テンプレート選択
+          {!editingAgentName && (
+            <div className="space-y-4 mb-4">
+              <div className="flex space-x-4">
+                <label className="flex items-center">
+                  <input
+                    type="radio"
+                    checked={creationType === "new"}
+                    onChange={() => {
+                      setCreationType("new");
+                      setAgentName("");
+                      setAgentContext("");
+                      setAgentInstructions("");
+                    }}
+                    className="mr-2"
+                  />
+                  新規作成
                 </label>
-                <select
-                  value={selectedTemplateId}
-                  onChange={(e) => setSelectedTemplateId(e.target.value)}
-                  className="w-full p-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  disabled={isCreating}
-                >
-                  <option value="">テンプレートを選択...</option>
-                  {savedAgents.map((agent) => {
-                    const room = allRooms.find((r) => r.id === agent.roomId);
-                    return (
-                      <option key={agent.id} value={agent.id}>
-                        {agent.name.replace(/^Agent:+/, "")} (
-                        {room?.name || "保存済み"})
-                      </option>
-                    );
-                  })}
-                </select>
+                <label className="flex items-center">
+                  <input
+                    type="radio"
+                    checked={creationType === "template"}
+                    onChange={() => setCreationType("template")}
+                    className="mr-2"
+                  />
+                  テンプレートから作成
+                </label>
               </div>
-            )}
-          </div>
+
+              {creationType === "template" && (
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    テンプレート選択
+                  </label>
+                  <select
+                    value={selectedTemplateId}
+                    onChange={(e) => setSelectedTemplateId(e.target.value)}
+                    className="w-full p-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    disabled={isCreating}
+                  >
+                    <option value="">テンプレートを選択...</option>
+                    {savedAgents.map((agent) => {
+                      const room = allRooms.find((r) => r.id === agent.roomId);
+                      return (
+                        <option key={agent.id} value={agent.id}>
+                          {agent.name.replace(/^Agent:+/, "")} (
+                          {room?.name || "保存済み"})
+                        </option>
+                      );
+                    })}
+                  </select>
+                </div>
+              )}
+            </div>
+          )}
 
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">
@@ -207,19 +235,21 @@ export function CreateAgentModal({
               disabled={isCreating}
             />
           </div>
-          <div className="flex items-center mb-4">
-            <input
-              type="checkbox"
-              checked={shouldSaveAgent}
-              onChange={(e) => setShouldSaveAgent(e.target.checked)}
-              className="mr-2"
-              id="saveAgent"
-              disabled={isCreating}
-            />
-            <label htmlFor="saveAgent" className="text-sm text-gray-700">
-              このエージェントを保存する
-            </label>
-          </div>
+          {!editingAgentName && (
+            <div className="flex items-center mb-4">
+              <input
+                type="checkbox"
+                checked={shouldSaveAgent}
+                onChange={(e) => setShouldSaveAgent(e.target.checked)}
+                className="mr-2"
+                id="saveAgent"
+                disabled={isCreating}
+              />
+              <label htmlFor="saveAgent" className="text-sm text-gray-700">
+                この設定をテンプレートとして保存する
+              </label>
+            </div>
+          )}
 
           <div className="flex justify-end space-x-3">
             <button
