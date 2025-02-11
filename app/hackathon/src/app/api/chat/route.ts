@@ -13,7 +13,7 @@ const vertex = new VertexAI({
   location,
 });
 
-const model = "gemini-1.5-pro";
+const model = "gemini-2.0-pro-exp-02-05";
 
 export async function POST(req: NextRequest) {
   try {

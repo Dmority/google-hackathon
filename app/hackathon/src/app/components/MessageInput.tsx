@@ -78,7 +78,7 @@ export function MessageInput({
             autoFocus
             style={{ minHeight: "44px", maxHeight: "120px" }}
             onKeyDown={(e) => {
-              if (e.key === "Enter") {
+              if (e.key === "Enter" && !e.nativeEvent.isComposing) {
                 if (e.shiftKey) {
                   e.preventDefault();
                   onChange(value + "\n");
