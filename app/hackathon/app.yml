@@ -10,7 +10,6 @@ spec:
     healthyThreshold: 1
     unhealthyThreshold: 2
     type: HTTP
-    port: 3000
     requestPath: /api/health
 ---
 apiVersion: networking.gke.io/v1
@@ -43,7 +42,7 @@ spec:
       serviceAccountName: web-pods-service-account
       containers:
         - name: web-app
-          image: asia-northeast1-docker.pkg.dev/handson-446606/app/web:0.07
+          image: asia-northeast1-docker.pkg.dev/handson-446606/app/web:0.09
           env:
             - name: REDIS_URL
               value: "redis://redis-service:6379"
